@@ -4,43 +4,41 @@ import requests
 import subprocess
 from urllib.parse import unquote, urlsplit
 
+def sanitize_filename(filename):
+    # Remove any characters that are invalid in file names for different OSes
+    return re.sub(r'[<>:"/\\|?*]', '', filename)
+
 def get_filename_from_url(url):
     """
     Try to get the filename from the HTTP headers or URL.
     """
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         # Send a HEAD request to get headers
-        response = requests.head(url, allow_redirects=True)
-        
+        response = requests.head(url, allow_redirects=True, headers=headers)
+
         # Check if 'Content-Disposition' header is present
-        if 'Content-Disposition' in response.headers:
-            # Extract filename from Content-Disposition header
-            filename_match = re.findall(r'filename\*=UTF-8\'\'(.+)', response.headers['Content-Disposition'])
-            if not filename_match:
-                filename_match = re.findall(r'filename="(.+)"', response.headers['Content-Disposition'])
-                
-            if filename_match:
-                return unquote(filename_match[0])
+        filename_match = re.findall(r'filename\*=UTF-8\'\'(.+)', response.headers.get('Content-Disposition', '')) or \
+                         re.findall(r'filename="(.+)"', response.headers.get('Content-Disposition', ''))
+        if filename_match:
+            return sanitize_filename(unquote(filename_match[0]))
 
         # If no filename found from headers, fall back to a GET request to inspect response
-        response = requests.get(url, stream=True, allow_redirects=True)
-        if 'Content-Disposition' in response.headers:
-            filename_match = re.findall(r'filename\*=UTF-8\'\'(.+)', response.headers['Content-Disposition'])
-            if not filename_match:
-                filename_match = re.findall(r'filename="(.+)"', response.headers['Content-Disposition'])
-            
-            if filename_match:
-                return unquote(filename_match[0])
+        response = requests.get(url, stream=True, allow_redirects=True, headers=headers)
+        filename_match = re.findall(r'filename\*=UTF-8\'\'(.+)', response.headers.get('Content-Disposition', '')) or \
+                         re.findall(r'filename="(.+)"', response.headers.get('Content-Disposition', ''))
+        if filename_match:
+            return sanitize_filename(unquote(filename_match[0]))
 
         # If no filename from headers, try to get it from URL path
         path = urlsplit(response.url).path
         filename = os.path.basename(path)
         if filename:
-            return unquote(filename)
+            return sanitize_filename(unquote(filename))
 
     except requests.RequestException as e:
         print(f"Error fetching filename: {e}")
-    
+
     return "downloaded_file"  # Default name if filename can't be determined
 
 def download_with_aria2c(url, download_path):
@@ -68,6 +66,8 @@ def download_with_aria2c(url, download_path):
 
     # Run the aria2c command
     try:
+        # Check if aria2c is installed
+        subprocess.run(["aria2c", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         print(f"Starting download with aria2c...\nCommand: {' '.join(command)}")
         subprocess.run(command, check=True)
         print(f"Download completed: {file_path}")
